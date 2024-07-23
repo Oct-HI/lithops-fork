@@ -303,7 +303,8 @@ class FunctionExecutor:
         obj_reduce_by_key: Optional[bool] = False,
         spawn_reducer: Optional[int] = 20,
         include_modules: Optional[List[str]] = [],
-        exclude_modules: Optional[List[str]] = []
+        exclude_modules: Optional[List[str]] = [],
+        reduction_levels: Optional[List[int]] = []
     ) -> FuturesList:
         """
         Map the map_function over the data and apply the reduce_function across all futures.
@@ -326,6 +327,7 @@ class FunctionExecutor:
         :param spawn_reducer: Percentage of done map functions before spawning the reduce function
         :param include_modules: Explicitly pickle these dependencies.
         :param exclude_modules: Explicitly keep these modules from pickled dependencies.
+        :param reduction_levels: Define the number of intermediate tree nodules. 
 
         :return: A list with size `len(map_iterdata)` of futures.
         """
@@ -353,10 +355,10 @@ class FunctionExecutor:
             exclude_modules=exclude_modules,
             execution_timeout=timeout
         )
-
+   
         map_futures = self.invoker.run_job(map_job)
         self.futures.extend(map_futures)
-
+        backup_map_futures= map_futures
         if isinstance(map_iterdata, FuturesList):
             for fut in map_iterdata:
                 fut._produce_output = False
@@ -365,12 +367,52 @@ class FunctionExecutor:
             self.wait(map_futures, return_when=spawn_reducer)
             logger.debug(f'ExecutorID {self.executor_id} | JobID {map_job_id} - '
                          f'{spawn_reducer}% of map activations done. Spawning reduce stage')
+        
+        #//
+        if len(reduction_levels) and 0 not in reduction_levels: #If reduction levels doesn't exist, code remains functionally the same as before. 
+            tier = 0
+            split_map_futures = list(self.split_futures_list(map_futures,reduction_levels[tier]))
+            for levels in reduction_levels:
+                temporal_futures = []
+                level = 0
+                tier +=1
+                total = levels
+                while level < total: #Reducción por nivel equivalente
+                    logger.debug(f'ExecutorID {self.executor_id} | JobID {map_job_id} - '
+                         f'Processing node number: {level} of the level: {tier} of the tree reduction')
+                    reduce_job_id_internal = self._create_job_id('R') #Cada reduce job necesita una ID propia para funcionar(?)
+                    runtime_meta_internal = self.invoker.select_runtime(reduce_job_id_internal, reduce_runtime_memory)
+                    reduce_job = create_reduce_job(
+                    config=self.config,
+                    internal_storage=self.internal_storage,
+                    executor_id=self.executor_id,
+                    reduce_job_id=reduce_job_id_internal,
+                    reduce_function=reduce_function,
+                    map_job=map_job,
+                    map_futures=split_map_futures[level],
+                    runtime_meta=runtime_meta_internal,
+                    runtime_memory=reduce_runtime_memory,
+                    extra_args=extra_args_reduce,
+                    obj_reduce_by_key=obj_reduce_by_key,
+                    extra_env=extra_env,
+                    include_modules=include_modules,
+                    exclude_modules=exclude_modules
+                    )
 
+                    reduce_job_futures = self.invoker.run_job(reduce_job)
+                    temporal_futures.extend(reduce_job_futures)
+                    level +=1 
+                if (len(reduction_levels)>tier):
+                    split_map_futures = list(self.split_futures_list(temporal_futures,reduction_levels[tier]))
+                    logger.debug(f'Starting level: {tier} of the tree reduction')
+                else:
+                    split_map_futures = temporal_futures
+            map_futures = split_map_futures
+        #//          
         reduce_job_id = map_job_id.replace('M', 'R')
-
         runtime_meta = self.invoker.select_runtime(reduce_job_id, reduce_runtime_memory)
 
-        reduce_job = create_reduce_job(
+        reduce_job = create_reduce_job( #Same final reduction stage as before. 
             config=self.config,
             internal_storage=self.internal_storage,
             executor_id=self.executor_id,
@@ -386,13 +428,18 @@ class FunctionExecutor:
             include_modules=include_modules,
             exclude_modules=exclude_modules
         )
-
+        map_futures = backup_map_futures #//
         reduce_futures = self.invoker.run_job(reduce_job)
         self.futures.extend(reduce_futures)
-
         [f._set_mapreduce() for f in map_futures]
 
         return create_futures_list(map_futures + reduce_futures, self)
+    
+    def split_futures_list (self,list, parts): #Muy lento?
+        d, r = divmod(len(list), parts)
+        for i in range(parts):
+            si = (d+1)*(i if i < r else r) + d*(0 if i < r else i - r)
+            yield list[si:si+(d+1 if i < r else d)]
 
     def wait(
         self,
