@@ -304,7 +304,7 @@ class FunctionExecutor:
         spawn_reducer: Optional[int] = 20,
         include_modules: Optional[List[str]] = [],
         exclude_modules: Optional[List[str]] = [],
-        reduction_levels: Optional[List[int]] = []
+        depth: Optional[int] = None
     ) -> FuturesList:
         """
         Map the map_function over the data and apply the reduce_function across all futures.
@@ -327,7 +327,7 @@ class FunctionExecutor:
         :param spawn_reducer: Percentage of done map functions before spawning the reduce function
         :param include_modules: Explicitly pickle these dependencies.
         :param exclude_modules: Explicitly keep these modules from pickled dependencies.
-        :param reduction_levels: Define the number of intermediate tree nodules. 
+        :param depth: Define the depth of the tree reduction
 
         :return: A list with size `len(map_iterdata)` of futures.
         """
@@ -369,15 +369,15 @@ class FunctionExecutor:
                          f'{spawn_reducer}% of map activations done. Spawning reduce stage')
         
         #//
-        if len(reduction_levels) and 0 not in reduction_levels: #If reduction levels doesn't exist, code remains functionally the same as before. 
+        if depth: #If depth doesn't exist, code remains functionally the same as before.
+            reduction_levels = self.calculate_reduction_levels(len(map_futures),depth)
             tier = 0
             split_map_futures = list(self.split_futures_list(map_futures,reduction_levels[tier]))
             for levels in reduction_levels:
                 temporal_futures = []
-                level = 0
                 tier +=1
                 total = levels
-                while level < total: #Reducción por nivel equivalente
+                for level in range(levels):
                     logger.debug(f'ExecutorID {self.executor_id} | JobID {map_job_id} - '
                          f'Processing node number: {level} of the level: {tier} of the tree reduction')
                     reduce_job_id_internal = self._create_job_id('R') #Cada reduce job necesita una ID propia para funcionar(?)
@@ -401,7 +401,6 @@ class FunctionExecutor:
 
                     reduce_job_futures = self.invoker.run_job(reduce_job)
                     temporal_futures.extend(reduce_job_futures)
-                    level +=1 
                 if (len(reduction_levels)>tier):
                     split_map_futures = list(self.split_futures_list(temporal_futures,reduction_levels[tier]))
                     logger.debug(f'Starting level: {tier} of the tree reduction')
@@ -440,6 +439,14 @@ class FunctionExecutor:
         for i in range(parts):
             si = (d+1)*(i if i < r else r) + d*(0 if i < r else i - r)
             yield list[si:si+(d+1 if i < r else d)]
+    
+    def calculate_reduction_levels(initial_value, depth):
+        reduction_levels = []
+        current_value = initial_value
+        for i in range(depth, 1, -1):  
+            current_value = math.floor(current_value ** (1 / i))
+            reduction_levels.append(current_value)
+        return reduction_levels
 
     def wait(
         self,
