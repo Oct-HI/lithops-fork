@@ -440,12 +440,13 @@ class FunctionExecutor:
             si = (d+1)*(i if i < r else r) + d*(0 if i < r else i - r)
             yield list[si:si+(d+1 if i < r else d)]
     
-    def calculate_reduction_levels(initial_value, depth):
+    def calculate_reduction_levels(self,initial_value, depth):
         reduction_levels = []
         current_value = initial_value
         for i in range(depth, 1, -1):  
-            current_value = math.floor(current_value ** (1 / i))
-            reduction_levels.append(current_value)
+            current_value = int(current_value ** (1 / i)) #Instead of math.floor keep only integer. 
+            if current_value > 1 : reduction_levels.append(current_value) #If current value is 1 this is a redundant reduction step. 
+            logger.debug(f'La raiz: {i} es {current_value} con un valor inciial de {initial_value}')
         return reduction_levels
 
     def wait(
