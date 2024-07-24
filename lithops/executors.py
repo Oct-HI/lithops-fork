@@ -376,7 +376,6 @@ class FunctionExecutor:
             for levels in reduction_levels:
                 temporal_futures = []
                 tier +=1
-                total = levels
                 for level in range(levels):
                     logger.debug(f'ExecutorID {self.executor_id} | JobID {map_job_id} - '
                          f'Processing node number: {level} of the level: {tier} of the tree reduction')
@@ -443,10 +442,11 @@ class FunctionExecutor:
     def calculate_reduction_levels(self,initial_value, depth):
         reduction_levels = []
         current_value = initial_value
-        for i in range(depth, 1, -1):  
-            current_value = int(current_value ** (1 / i)) #Instead of math.floor keep only integer. 
+        initial_reduction_value = current_value ** (1 / depth)
+        for i in range(depth-1, 0, -1):  
+            current_value = int(initial_reduction_value ** (i)) #Instead of math.floor keep only integer. 
             if current_value > 1 : reduction_levels.append(current_value) #If current value is 1 this is a redundant reduction step. 
-            logger.debug(f'La raiz: {i} es {current_value} con un valor inciial de {initial_value}')
+            logger.debug(f'Para el nivel: {i} es {current_value} con un valor inciial de {initial_value} and the list is {reduction_levels}')
         return reduction_levels
 
     def wait(
